@@ -120,9 +120,85 @@ python3 web/app.py
 ```
 
 A test sample generator is included:
+
 ```bash
 python3 web/gen_test_sample.py
 # Generates test_beacon_sim.bin with 21 config settings
+```
+
+### 5. Sleep Mask Analyzer (`parsers/cs_sleepmask_analyzer.py`)
+
+Reverse engineers Sleep Mask BOF files (COFF format) from Sleeve templates.
+
+- COFF header/section/symbol/relocation parsing
+- `.text` hex dump with XOR loop pattern detection
+- Cross-file comparison (x86 vs x64, HTTP vs SMB vs TCP)
+- C pseudocode reconstruction of the masking logic
+- Build path and compiler identification
+
+```bash
+# Analyze all sleep mask BOFs in a directory
+python3 parsers/cs_sleepmask_analyzer.py /path/to/sleeve_decrypted/
+
+# Single file analysis
+python3 parsers/cs_sleepmask_analyzer.py sleepmask.x64.o --format json
+```
+
+### 6. C2 Traffic Decryptor (`parsers/cs_traffic_decryptor.py`)
+
+Decrypts Cobalt Strike Beacon C2 traffic for incident response.
+
+**Three modes:**
+
+| Mode | Input | Output |
+|------|-------|--------|
+| Session decrypt | Session key + encrypted data | Decoded commands/callbacks |
+| RSA metadata | Private key + Base64 cookie | Session key + beacon info |
+| PCAP pipeline | PCAP + private key | Full operation timeline |
+
+```bash
+# Decrypt task data with known session key
+python3 parsers/cs_traffic_decryptor.py \
+  --session-key 0123456789abcdef0123456789abcdef \
+  --data <encrypted_hex> --direction task
+
+# Decrypt beacon metadata (from Cookie header)
+python3 parsers/cs_traffic_decryptor.py \
+  --private-key beacon_keys.pem --metadata "Base64..."
+
+# Full PCAP decryption
+python3 parsers/cs_traffic_decryptor.py \
+  --pcap traffic.pcap --private-key beacon_keys.pem
+
+# Self-test (9 automated tests)
+python3 parsers/cs_traffic_decryptor.py --self-test
+```
+
+Decodes 30+ command IDs (SHELL, SLEEP, INJECT, SPAWN, BOF, etc.) and 15+ callback types.
+
+### 7. Binary Diff Visualizer (`parsers/cs_bindiff_visual.py`)
+
+Generates visual byte-level diffs between Sleeve template versions.
+
+- HTML heatmap with color-coded bytes (identical/modified/added/removed)
+- PE section overlay (.text, .rdata, .data, .reloc boundaries)
+- Shannon entropy per 256-byte block
+- Per-section change statistics
+- Export table diff
+- Batch directory comparison dashboard
+
+```bash
+# Single file diff → HTML heatmap
+python3 parsers/cs_bindiff_visual.py \
+  --file1 v461/beacon.dll --file2 v491/beacon.dll -o diff.html
+
+# Batch directory comparison
+python3 parsers/cs_bindiff_visual.py \
+  --dir1 sleeve_461/ --dir2 sleeve_491/ -o diff_report/
+
+# Stats only (no HTML)
+python3 parsers/cs_bindiff_visual.py \
+  --dir1 sleeve_461/ --dir2 sleeve_491/ --stats-only
 ```
 
 ## Detection Rules
@@ -233,7 +309,10 @@ cs-analysis-toolkit/
 ├── parsers/
 │   ├── cs_config_parser.py               # Beacon config extractor (CLI)
 │   ├── cs_sleeve_decryptor.py            # Sleeve AES decryptor
-│   └── cs_sleeve_compare.py             # Version comparator + YARA gen
+│   ├── cs_sleeve_compare.py             # Version comparator + YARA gen
+│   ├── cs_sleepmask_analyzer.py         # Sleep Mask BOF reverse engineer
+│   ├── cs_traffic_decryptor.py          # C2 traffic decryptor (RSA+AES)
+│   └── cs_bindiff_visual.py             # Binary diff heatmap visualizer
 ├── web/
 │   ├── app.py                            # Flask web analyzer
 │   └── gen_test_sample.py               # Test sample generator
