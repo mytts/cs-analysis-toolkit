@@ -1,0 +1,72 @@
+# Cobalt Strike 4.9.1 Suricata/Snort 检测规则
+# 基于完整逆向分析 (Docs 01-28)
+# 日期: 2026-04-01
+
+# ─── HTTP C2 通信 ────────────────────────────────────────
+
+# 1. 默认 Beacon HTTP-GET (default.profile URIs)
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"CS Beacon Default Profile GET - __utm.gif"; flow:established,to_server; http.method; content:"GET"; http.uri; content:"/__utm.gif"; http.cookie; content:!"|00|"; pcre:"/^[A-Za-z0-9\+\/\=]{20,512}$/R"; classtype:trojan-activity; sid:4091001; rev:1;)
+
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"CS Beacon Default Profile GET - pixel.gif"; flow:established,to_server; http.method; content:"GET"; http.uri; content:"/pixel.gif"; http.cookie; pcre:"/^[A-Za-z0-9\+\/\=]{20,512}$/R"; classtype:trojan-activity; sid:4091002; rev:1;)
+
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"CS Beacon Default Profile GET - updates.rss"; flow:established,to_server; http.method; content:"GET"; http.uri; content:"/updates.rss"; http.cookie; pcre:"/^[A-Za-z0-9\+\/\=]{20,512}$/R"; classtype:trojan-activity; sid:4091003; rev:1;)
+
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"CS Beacon Default Profile GET - IE9CompatViewList.xml"; flow:established,to_server; http.method; content:"GET"; http.uri; content:"/IE9CompatViewList.xml"; classtype:trojan-activity; sid:4091004; rev:1;)
+
+# 2. 默认 Beacon HTTP-POST (task output)
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"CS Beacon Default Profile POST - submit.php"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/submit.php"; http.content_type; content:"application/octet-stream"; classtype:trojan-activity; sid:4091010; rev:1;)
+
+# 3. Beacon HTTP-POST with ID parameter
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"CS Beacon POST with numeric ID parameter"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/submit.php"; http.uri; pcre:"/id=[0-9]{1,10}/"; classtype:trojan-activity; sid:4091011; rev:1;)
+
+# 4. Stager download (large octet-stream response to known URIs)
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"CS Stager Download Response"; flow:established,to_client; http.response_body; content:"|4D 5A|"; depth:2; http.content_type; content:"application/octet-stream"; filesize:>50000; classtype:trojan-activity; sid:4091020; rev:1;)
+
+# ─── DNS Beacon ──────────────────────────────────────────
+
+# 5. DNS Beacon 默认前缀 - cdn. (A record query)
+alert dns $HOME_NET any -> any 53 (msg:"CS DNS Beacon cdn prefix"; dns.query; pcre:"/^cdn\.[0-9a-f]{8,}/"; classtype:trojan-activity; sid:4091030; rev:1;)
+
+# 6. DNS Beacon 默认前缀 - www6. (AAAA record)
+alert dns $HOME_NET any -> any 53 (msg:"CS DNS Beacon www6 prefix"; dns.query; pcre:"/^www6\.[0-9a-f]{8,}/"; classtype:trojan-activity; sid:4091031; rev:1;)
+
+# 7. DNS Beacon 默认前缀 - api. (TXT record)
+alert dns $HOME_NET any -> any 53 (msg:"CS DNS Beacon api prefix"; dns.query; pcre:"/^api\.[0-9a-f]{8,}/"; classtype:trojan-activity; sid:4091032; rev:1;)
+
+# 8. DNS Beacon 默认前缀 - post. (output)
+alert dns $HOME_NET any -> any 53 (msg:"CS DNS Beacon post prefix"; dns.query; pcre:"/^post\.[0-9a-f]{8,}/"; classtype:trojan-activity; sid:4091033; rev:1;)
+
+# 9. DNS Beacon hex 编码子域名模式 (通用)
+alert dns $HOME_NET any -> any 53 (msg:"CS DNS Beacon Hex Subdomain Encoding"; dns.query; pcre:"/\.[1-4][0-9a-f]{8}\.[0-9a-f]{16,56}\./"; classtype:trojan-activity; sid:4091034; rev:1;)
+
+# ─── TLS/JA3 特征 ───────────────────────────────────────
+
+# 10. CS 默认 WinINet TLS 指纹 (需要 JA3 插件)
+# JA3 hash for default CS HTTPS beacon (WinINet)
+# 注: 实际 JA3 值需根据具体环境验证
+# alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"CS Beacon WinINet JA3"; ja3.hash; content:"72a589da586844d7f0818ce684948eea"; classtype:trojan-activity; sid:4091040; rev:1;)
+
+# ─── Named Pipe (SMB) ───────────────────────────────────
+
+# 11. CS 默认 SMB Beacon 管道名
+alert smb $HOME_NET any -> $HOME_NET any (msg:"CS SMB Beacon Default Pipe MSSE"; content:"|4D 53 53 45 2D|"; classtype:trojan-activity; sid:4091050; rev:1;)
+
+# ─── REST API ────────────────────────────────────────────
+
+# 12. CS REST API 访问 (port 50443)
+alert tls $HOME_NET any -> any 50443 (msg:"CS REST API TLS Connection"; flow:established,to_server; classtype:trojan-activity; sid:4091060; rev:1;)
+
+# ─── TeamServer 检测 ─────────────────────────────────────
+
+# 13. CS TeamServer 默认 TLS 证书 (默认自签名)
+# 默认 CN=Major Cobalt Strike
+alert tls any any -> $HOME_NET any (msg:"CS TeamServer Default TLS Certificate"; tls.cert_subject; content:"Major Cobalt Strike"; classtype:trojan-activity; sid:4091070; rev:1;)
+
+# 14. CS Stager 响应特征 (MZ header in HTTP body)
+# 配合 URI 检测更准确
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"CS Staged Payload Delivery"; flow:established,to_client; content:"|4D 5A 90 00|"; depth:4; http.header; content:"Content-Type"; content:"application/octet-stream"; classtype:trojan-activity; sid:4091071; rev:1;)
+
+# ─── EICAR 防盗版 ───────────────────────────────────────
+
+# 15. 未授权 CS 版本的 EICAR 填充
+alert http any any -> any any (msg:"CS Unauthorized EICAR Padding"; content:"5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR"; classtype:trojan-activity; sid:4091080; rev:1;)

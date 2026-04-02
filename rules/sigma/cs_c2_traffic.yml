@@ -1,0 +1,245 @@
+title: Cobalt Strike Default C2 Profile HTTP Traffic
+id: cs-c2-default-profile-http
+status: experimental
+description: |
+  检测使用默认 Malleable C2 Profile 的 Cobalt Strike Beacon HTTP 通信。
+  基于 CS 4.9.1 default.profile 逆向分析。
+level: high
+date: 2026/04/01
+author: CS 逆向分析项目
+references:
+  - "Doc 23 - Beacon 通信协议与 C2 Profile 逆向"
+
+logsource:
+  category: proxy
+  product: any
+
+detection:
+  # 默认 GET URI 集合 (21 个)
+  default_get_uris:
+    cs-uri|endswith:
+      - '/ca'
+      - '/dpixel'
+      - '/__utm.gif'
+      - '/pixel.gif'
+      - '/g.pixel'
+      - '/dot.gif'
+      - '/updates.rss'
+      - '/fwlink'
+      - '/cm'
+      - '/cx'
+      - '/pixel'
+      - '/match'
+      - '/visit.js'
+      - '/load'
+      - '/push'
+      - '/ptj'
+      - '/j.ad'
+      - '/ga.js'
+      - '/en_US/all.js'
+      - '/activity'
+      - '/IE9CompatViewList.xml'
+
+  # 默认 POST URI
+  default_post_uri:
+    cs-uri|endswith: '/submit.php'
+    cs-method: 'POST'
+    cs-content-type: 'application/octet-stream'
+
+  # Cookie 中的 Base64 元数据 (RSA 加密)
+  beacon_cookie:
+    cs-cookie|re: '^[A-Za-z0-9+/=]{44,512}$'
+
+  # 定时心跳模式 (默认 60s ± jitter)
+  periodic_pattern:
+    cs-method: 'GET'
+
+  condition: (default_get_uris and beacon_cookie) or default_post_uri
+
+falsepositives:
+  - 正常的 Web 分析追踪像素请求
+  - 合法的 submit.php 表单提交
+tags:
+  - attack.command_and_control
+  - attack.t1071.001  # Application Layer Protocol: Web Protocols
+  - cobalt_strike
+---
+title: Cobalt Strike DNS Beacon Subdomain Encoding
+id: cs-dns-beacon-subdomain
+status: experimental
+description: |
+  检测 CS DNS Beacon 的子域名编码模式。
+  DNS Beacon 使用 hex 编码将数据嵌入子域名查询。
+level: high
+date: 2026/04/01
+author: CS 逆向分析项目
+references:
+  - "Doc 23 - DNS Beacon 子域名编码格式字符串"
+
+logsource:
+  category: dns
+  product: any
+
+detection:
+  # 默认 DNS 前缀 (default.profile)
+  dns_prefixes:
+    query|startswith:
+      - 'cdn.'
+      - 'www6.'
+      - 'api.'
+      - 'post.'
+
+  # Hex 编码数据子域名 (4-7 个 label, 每个 8-56 hex chars)
+  hex_subdomain:
+    query|re: '\.[1-4][0-9a-f]{8}\.[0-9a-f]{8,56}\.'
+
+  # 异常长子域名 (DNS tunneling 特征)
+  long_subdomain:
+    query|re: '^[a-z0-9.]{60,253}$'
+
+  # A/AAAA/TXT 混合查询
+  record_types:
+    rrtype:
+      - 'A'
+      - 'AAAA'
+      - 'TXT'
+
+  condition: (dns_prefixes and hex_subdomain) or (hex_subdomain and long_subdomain and record_types)
+
+falsepositives:
+  - CDN 服务的长子域名
+  - 合法的 DNS-based 服务发现
+tags:
+  - attack.command_and_control
+  - attack.t1071.004  # Application Layer Protocol: DNS
+  - cobalt_strike
+---
+title: Cobalt Strike Beacon Process Injection Indicators
+id: cs-beacon-process-injection
+status: experimental
+description: |
+  检测 CS Beacon 进程注入行为。
+  覆盖传统注入 + 4.12 新技术 (线程池、进程克隆)。
+level: critical
+date: 2026/04/01
+author: CS 逆向分析项目
+references:
+  - "Doc 15 - 进程注入技术"
+  - "Doc 28 - 4.12 新注入技术"
+
+logsource:
+  category: process_access
+  product: windows
+
+detection:
+  # 经典 CreateRemoteThread 注入
+  remote_thread:
+    EventID: 8  # Sysmon CreateRemoteThread
+    SourceImage|endswith:
+      - '\rundll32.exe'
+      - '\dllhost.exe'
+      - '\gpupdate.exe'
+      - '\mstsc.exe'
+    TargetImage|endswith:
+      - '\svchost.exe'
+      - '\explorer.exe'
+
+  # 可疑的内存分配模式 (VirtualAllocEx + WriteProcessMemory)
+  memory_alloc:
+    EventID: 10  # Sysmon ProcessAccess
+    GrantedAccess|contains:
+      - '0x1F0FFF'  # PROCESS_ALL_ACCESS
+      - '0x001F0FFF'
+      - '0x1FFFFF'
+
+  # CS 默认 SpawnTo 进程
+  spawnto:
+    EventID: 1  # Sysmon ProcessCreate
+    Image|endswith:
+      - '\rundll32.exe'
+    CommandLine|contains:
+      - 'rundll32.exe'
+    ParentImage|endswith:
+      - '\rundll32.exe'
+      - '\dllhost.exe'
+
+  condition: remote_thread or memory_alloc or spawnto
+
+falsepositives:
+  - 合法的 rundll32 使用
+  - Windows 系统更新进程
+tags:
+  - attack.defense_evasion
+  - attack.privilege_escalation
+  - attack.t1055  # Process Injection
+  - cobalt_strike
+---
+title: Cobalt Strike Named Pipe Beacon
+id: cs-smb-beacon-pipe
+status: experimental
+description: |
+  检测 CS SMB Beacon 使用的命名管道通信模式。
+level: high
+date: 2026/04/01
+author: CS 逆向分析项目
+references:
+  - "Doc 23 - SMB/TCP Beacon"
+
+logsource:
+  category: pipe_created
+  product: windows
+
+detection:
+  # CS 默认管道名称模式
+  default_pipes:
+    PipeName|startswith:
+      - '\MSSE-'           # 默认 Beacon pipe
+      - '\msagent_'        # 默认 PostEx pipe
+      - '\postex_'         # 自定义 PostEx
+      - '\postex_ssh_'     # SSH agent
+
+  # CS 常见自定义管道名模式
+  custom_pipes:
+    PipeName|re: '\\\\[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'
+
+  condition: default_pipes or custom_pipes
+
+falsepositives:
+  - Windows Defender (MSSE- 前缀)
+  - 合法的 UUID 格式管道名
+tags:
+  - attack.command_and_control
+  - attack.t1570  # Lateral Tool Transfer
+  - cobalt_strike
+---
+title: Cobalt Strike REST API Access (4.12+)
+id: cs-rest-api-access
+status: experimental
+description: |
+  检测对 CS TeamServer REST API 的访问 (端口 50443)。
+level: critical
+date: 2026/04/01
+author: CS 逆向分析项目
+references:
+  - "Doc 28 - REST API 分析"
+
+logsource:
+  category: firewall
+  product: any
+
+detection:
+  rest_api_port:
+    dst_port: 50443
+
+  rest_api_traffic:
+    dst_port: 50443
+    action: 'allow'
+
+  condition: rest_api_port
+
+falsepositives:
+  - 其他使用 50443 端口的应用
+tags:
+  - attack.command_and_control
+  - attack.t1219  # Remote Access Software
+  - cobalt_strike
